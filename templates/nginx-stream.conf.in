@@ -1,0 +1,16 @@
+stream {
+    map_hash_bucket_size 512;
+    map $ssl_preread_server_name $xui_upstream {
+        @REALITY_SNI@ 127.0.0.1:@REALITY_PORT@;
+        default       127.0.0.1:@FRONT_PORT@;
+    }
+    server {
+        listen 443;
+        listen [::]:443;
+        ssl_preread on;
+        proxy_pass $xui_upstream;
+        proxy_protocol on;
+        proxy_connect_timeout 10s;
+        proxy_timeout 1h;
+    }
+}

@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+STATE="/etc/xui-deployer/state.env"
+XUI_ENV="/etc/x-ui/install-result.env"
+RESULT="/root/xui-deployer.txt"
+
+[[ $EUID -eq 0 ]] || { echo "Нужен root: sudo xui-deployer $*" >&2; exit 1; }
+[[ -f $STATE ]] && source "$STATE"
+[[ -f $XUI_ENV ]] && source "$XUI_ENV"
+
+cmd_info() {
+  if [[ -f $RESULT ]]; then cat "$RESULT"; else echo "Результат не найден ($RESULT)."; fi
+}
+
+cmd_status() {
+  echo "=== Сервисы ==="
+  local s
+  for s in x-ui nginx client-sub; do
+    printf '  %-8s %s\n' "$s" "$(systemctl is-active "$s" 2>/dev/null || echo inactive)"
+  done
+  echo
+  echo "=== x-ui ==="
+  systemctl status x-ui --no-pager 2>&1 | head -8
+  echo
+  echo "=== Порты ==="
+  ss -tlnp 2>/dev/null | grep -E 'x-ui|xray|nginx|:443|:80' || true
+  echo
+  echo "=== UFW ==="
+  ufw status 2>/dev/null | head -25 || true
+  echo
+  echo "=== Сертификаты (acme.sh) ==="
+  /root/.acme.sh/acme.sh --list 2>/dev/null | head -12 || true
+}
+
+cmd_restart() {
+  systemctl restart x-ui
+  [[ -f /etc/nginx/xui-stream.conf ]] && systemctl reload nginx
+  [[ ${CLIENT_SUB_ACTIVE:-no} == yes ]] && systemctl restart client-sub
+  echo "x-ui перезапущен, nginx перезагружен."
+}
+
+cmd_links() {
+  local link="${SUB_LINK:-${SUB_URL}${SUBID}}"
+  echo "Подписка (все протоколы): $link"
+  echo
+  echo "Ссылки по протоколам:"
+  curl -fsSk -m 15 -A "v2rayNG/1.8.5" "$link" 2>/dev/null | base64 -d 2>/dev/null \
+    || echo "(не удалось получить подписку)"
+}
+
+cmd_routing() {
+  local py="/usr/local/lib/client-sub/client_sub.py"
+  local rules="/etc/client-sub/rules.yaml"
+  [[ -f $py ]] || { echo "client-sub не установлен ($py)." >&2; exit 1; }
+
+  local token="${XUI_API_TOKEN:-}"
+  [[ -n $token ]] || { echo "В /etc/x-ui/install-result.env нет XUI_API_TOKEN." >&2; exit 1; }
+  local port="${XUI_PANEL_PORT:-${PANEL_PORT:-}}" path="${XUI_WEB_BASE_PATH:-${PANEL_PATH:-}}"
+  [[ -n $port && -n $path ]] || { echo "Не нашёл порт/путь панели в состоянии установки." >&2; exit 1; }
+
+  local api="" scheme
+  for scheme in https http; do
+    api="$scheme://127.0.0.1:$port/$path/panel/api"
+    if curl -fsSk -m 5 -o /dev/null -H "Authorization: Bearer $token" "$api/server/getNewUUID" 2>/dev/null; then
+      break
+    fi
+    api=""
+  done
+  [[ -n $api ]] || { echo "Панель не отвечает – проверьте: xui-deployer status" >&2; exit 1; }
+
+  local happ="" json="" enable=false
+  if [[ -s $rules ]]; then
+    happ=$(python3 "$py" --routing-payload happ) || { echo "rules.yaml не разобран – настройки не меняю." >&2; exit 1; }
+    json=$(python3 "$py" --routing-payload json) || { echo "rules.yaml не разобран – настройки не меняю." >&2; exit 1; }
+    enable=true
+  fi
+
+  local all upd
+  all=$(curl -fsSk -m 25 -H "Authorization: Bearer $token" "$api/setting/all") \
+    || { echo "Не удалось прочитать настройки панели." >&2; exit 1; }
+  [[ $(jq -r '.success' <<<"$all") == true ]] \
+    || { echo "Панель отклонила чтение настроек: $(jq -r '.msg // .' <<<"$all")" >&2; exit 1; }
+  upd=$(jq -c --argjson enable "$enable" --arg happ "$happ" --arg json "$json" \
+    '.obj | .subEnableRouting = $enable | .subRoutingRules = $happ | .subJsonRoutingRules = $json' <<<"$all")
+
+  local res
+  res=$(curl -fsSk -m 25 -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+    -X POST --data-binary "$upd" "$api/setting/update") \
+    || { echo "Не удалось сохранить настройки панели." >&2; exit 1; }
+  [[ $(jq -r '.success' <<<"$res") == true ]] \
+    || { echo "Панель отклонила настройки: $(jq -r '.msg // .' <<<"$res")" >&2; exit 1; }
+
+  systemctl restart x-ui
+  if [[ $enable == true ]]; then
+    echo "Маршрутизация из $rules применена: Happ (Routing) и JSON-подписка Xray."
+  else
+    echo "Файла $rules нет – маршрутизация отключена (весь трафик через VPN)."
+  fi
+}
+
+cmd_backup() {
+  local ts out tmp
+  ts=$(date -u +%Y%m%d-%H%M%S)
+  out="/root/xui-deployer-backup-$ts.tar.gz"
+  tmp=$(mktemp -d)
+  mkdir -p "$tmp/etc/x-ui" "$tmp/etc/xui-deployer" "$tmp/etc/client-sub" "$tmp/etc/nginx/conf.d" "$tmp/root"
+  cp -a /etc/x-ui/x-ui.db "$tmp/etc/x-ui/" 2>/dev/null || true
+  cp -a /etc/x-ui/install-result.env "$tmp/etc/x-ui/" 2>/dev/null || true
+  cp -a "$STATE" "$tmp/etc/xui-deployer/" 2>/dev/null || true
+  cp -a /etc/client-sub/config.json "$tmp/etc/client-sub/" 2>/dev/null || true
+  cp -a /etc/client-sub/rules.yaml "$tmp/etc/client-sub/" 2>/dev/null || true
+  cp -a /etc/client-sub/sni-grace.json "$tmp/etc/client-sub/" 2>/dev/null || true
+  cp -a /etc/nginx/xui-stream.conf "$tmp/etc/nginx/" 2>/dev/null || true
+  cp -a /etc/nginx/conf.d/xui-front.conf "$tmp/etc/nginx/conf.d/" 2>/dev/null || true
+  cp -a "$RESULT" "$tmp/root/" 2>/dev/null || true
+  cp -a /root/cert "$tmp/root/" 2>/dev/null || true
+  tar -czf "$out" -C "$tmp" .
+  rm -rf "$tmp"
+  chmod 600 "$out"
+  echo "Резервная копия: $out"
+  echo "Восстановление: скопируйте на чистый VPS и разверните вручную (БД + сертификаты + конфиги)."
+}
+
+case "${1:-help}" in
+  info)    cmd_info ;;
+  status)  cmd_status ;;
+  restart) cmd_restart ;;
+  routing|rules) cmd_routing ;;
+  links)   cmd_links ;;
+  backup)  cmd_backup ;;
+  help|-h|--help)
+    cat <<EOF
+xui-deployer – управление панелью
+  info      реквизиты и ссылки (из /root/xui-deployer.txt)
+  status    состояние сервисов, порты, файрвол, сертификаты
+  links     ссылка подписки и её содержимое (ссылки по протоколам)
+  restart   перезапустить x-ui, nginx и client-sub
+  routing   применить /etc/client-sub/rules.yaml к Happ и JSON-подписке
+  backup    резервная копия (БД, сертификаты, конфиги) в /root
+EOF
+    ;;
+  *) echo "Неизвестная команда: $1 (см. xui-deployer help)" >&2; exit 1 ;;
+esac

@@ -1,0 +1,10 @@
+*.log
+*.tar.gz
+*.bak
+.env
+state.env
+install-result.env
+.idea/
+.vscode/
+__pycache__/
+*.pyc
