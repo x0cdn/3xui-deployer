@@ -9,6 +9,7 @@ _created() { [[ " ${CREATED[*]:-} " == *" $1 "* ]]; }
 _render() {
   local tpl="$1" out="$2"; shift 2
   local content
+  shopt -u patsub_replacement 2>/dev/null || true
   content="$(cat "$tpl")"
   local kv key val
   for kv in "$@"; do
@@ -60,8 +61,16 @@ setup_nginx() {
   mkdir -p "$WEB_ROOT" "$NGINX_CONF_DIR/conf.d"
   _render "$TEMPLATES_DIR/landing.html.in" "$WEB_ROOT/index.html" "TITLE=${SUB_TITLE:-xui-deployer}"
 
+  local reality_map="" stream_upstream="127.0.0.1:${INNER[front]}"
+  if _created "REALITY" && [[ -n $REALITY_SNI ]]; then
+    reality_map="    map \$ssl_preread_server_name \$xui_upstream {
+        $REALITY_SNI 127.0.0.1:${INNER[reality]};
+        default 127.0.0.1:${INNER[front]};
+    }"
+    stream_upstream='$xui_upstream'
+  fi
   _render "$TEMPLATES_DIR/nginx-stream.conf.in" "$NGINX_STREAM" \
-    "REALITY_SNI=$REALITY_SNI" "REALITY_PORT=${INNER[reality]}" "FRONT_PORT=${INNER[front]}"
+    "REALITY_MAP=$reality_map" "STREAM_UPSTREAM=$stream_upstream"
   if ! grep -q "include $NGINX_STREAM;" "$NGINX_CONF_DIR/nginx.conf"; then
     printf '\ninclude %s;\n' "$NGINX_STREAM" >> "$NGINX_CONF_DIR/nginx.conf"
   fi

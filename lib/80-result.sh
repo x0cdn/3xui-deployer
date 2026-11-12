@@ -19,31 +19,37 @@ write_result() {
   links="$(fetch_links)"
 
   if [[ $DRY_RUN == yes ]]; then
-    info "  ${C_D}[dry-run] запись $RESULT_FILE и $STATE_DIR/state.env${C_N}"
+    info "  ${C_D}[dry-run] запись $RESULT_FILE и $STATE_DIR/state.json${C_N}"
     info "  панель: $panel_url  логин: $user"
     info "  подписка: $sub_link"
     return 0
   fi
 
   mkdir -p "$STATE_DIR"
-  cat > "$STATE_DIR/state.env" <<EOF
-HOST=$HOST
-DOMAIN=$DOMAIN
-XHTTP_SUB=$XHTTP_SUB
-PROTOCOLS="$PROTOCOLS_SELECTED"
-SSH_PORT=$SSH_PORT_FINAL
-PANEL_PORT=$panel_port
-PANEL_PATH=$panel_path
-PANEL_USER=$user
-SUBID=$SUBID
-SUB_URL=$SUB_URL
-SUB_LINK=$sub_link
-PANEL_URL=$panel_url
-REALITY_SNI=$REALITY_SNI
-CLIENT_SUB_ACTIVE=$CLIENT_SUB_ACTIVE
-DEPLOYED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-EOF
-  chmod 600 "$STATE_DIR/state.env"
+  jq -n \
+    --arg host "$HOST" \
+    --arg domain "$DOMAIN" \
+    --arg xhttp_sub "$XHTTP_SUB" \
+    --arg protocols "$PROTOCOLS_SELECTED" \
+    --arg ssh_port "$SSH_PORT_FINAL" \
+    --arg panel_port "$panel_port" \
+    --arg panel_path "$panel_path" \
+    --arg panel_user "$user" \
+    --arg subid "$SUBID" \
+    --arg sub_url "$SUB_URL" \
+    --arg sub_link "$sub_link" \
+    --arg panel_url "$panel_url" \
+    --arg reality_sni "$REALITY_SNI" \
+    --arg client_sub_active "$CLIENT_SUB_ACTIVE" \
+    --arg deployed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{host:$host, domain:$domain, xhttp_sub:$xhttp_sub, protocols:$protocols,
+      ssh_port:$ssh_port, panel_port:$panel_port, panel_path:$panel_path,
+      panel_user:$panel_user, subid:$subid, sub_url:$sub_url, sub_link:$sub_link,
+      panel_url:$panel_url, reality_sni:$reality_sni,
+      client_sub_active:$client_sub_active, deployed_at:$deployed_at}' \
+    > "$STATE_DIR/state.json"
+  chmod 600 "$STATE_DIR/state.json"
+  rm -f "$STATE_DIR/state.env"
 
   {
     cat <<EOF
@@ -68,7 +74,7 @@ ${links:-(подписка пока не отдала ссылки – пров�
 Управление:  xui-deployer info | status | links | routing | backup | restart
 Конфиги:     /etc/nginx/xui-stream.conf, /etc/nginx/conf.d/xui-front.conf
 Сертификаты: /root/cert/ (acme.sh, автопродление)
-Состояние:   $STATE_DIR/state.env
+Состояние:   $STATE_DIR/state.json
 EOF
   } > "$RESULT_FILE"
   chmod 600 "$RESULT_FILE"

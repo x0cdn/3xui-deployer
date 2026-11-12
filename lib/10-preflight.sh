@@ -1,5 +1,5 @@
 
-PREFLIGHT_PACKAGES=(curl jq openssl qrencode ca-certificates iproute2 ufw socat cron unzip python3 python3-yaml)
+PREFLIGHT_PACKAGES=(curl jq openssl qrencode ca-certificates iproute2 ufw socat cron unzip python3 python3-yaml libnginx-mod-stream)
 
 preflight_check() {
   if [[ $DRY_RUN == yes ]]; then
@@ -45,7 +45,27 @@ preflight_packages() {
     rm -f /etc/nginx/sites-enabled/default
     systemctl reload nginx >/dev/null 2>&1 || systemctl restart nginx
   fi
+  ensure_nginx_stream
   ok "Пакеты установлены (${#PREFLIGHT_PACKAGES[@]} + nginx)"
+}
+
+ensure_nginx_stream() {
+  local nv
+  nv="$(nginx -V 2>&1 || true)"
+  if [[ $nv == *--with-stream=dynamic* ]]; then
+    [[ -f /usr/lib/nginx/modules/ngx_stream_module.so ]] \
+      || die "nginx собран с динамическим stream, но модуль не найден: установите libnginx-mod-stream."
+  fi
+  if [[ $nv != *--with-stream* && ! -f /usr/lib/nginx/modules/ngx_stream_module.so ]]; then
+    die "nginx без модуля stream: установите libnginx-mod-stream и повторите."
+  fi
+  if [[ $nv == *--with-stream=dynamic* || -f /usr/lib/nginx/modules/ngx_stream_module.so ]]; then
+    if ! grep -rqs 'ngx_stream_module' /etc/nginx/modules-enabled /etc/nginx/nginx.conf 2>/dev/null; then
+      mkdir -p /etc/nginx/modules-enabled
+      printf 'load_module modules/ngx_stream_module.so;\n' > /etc/nginx/modules-enabled/50-mod-stream.conf
+    fi
+  fi
+  nginx -t >/dev/null 2>&1 || die "nginx не принимает базовый конфиг после установки модулей."
 }
 
 detect_public_ip() {

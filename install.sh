@@ -137,6 +137,35 @@ _normalize_protocols() {
   PROTOCOLS_SELECTED="$(IFS=,; echo "${ok_list% }" | tr ' ' ',')"
 }
 
+validate_config() {
+  local protos=",$PROTOCOLS_SELECTED,"
+  if [[ -n $DOMAIN ]]; then
+    valid_domain "$DOMAIN" || die "Некорректный домен: $DOMAIN (нужно имя вида vpn.example.com)"
+  fi
+  if [[ -n $SNI ]]; then
+    [[ -z $DOMAIN ]] || SNI=""
+    if [[ -n $SNI ]]; then
+      valid_domain "$SNI" || die "Некорректный сайт маскировки: $SNI (нужно доменное имя)"
+    fi
+  fi
+  if [[ -n $XHTTP_SUB ]]; then
+    if [[ -z $DOMAIN ]]; then
+      die "--xhttp-sub требует --domain: поддомену нужен сертификат и A-запись"
+    fi
+    valid_domain "$XHTTP_SUB" || die "Некорректный поддомен XHTTP: $XHTTP_SUB (нужно имя вида xhttp.example.com)"
+    [[ $XHTTP_SUB != "$DOMAIN" ]] \
+      || die "XHTTP-поддомен совпадает с доменом ($DOMAIN): nginx не различит их по SNI. Укажите отдельный поддомен."
+  fi
+  if [[ $protos == *,xhttp,* && -n $DOMAIN && -z $XHTTP_SUB ]]; then
+    XHTTP_SUB="xhttp.$DOMAIN"
+    valid_domain "$XHTTP_SUB" || die "Некорректный поддомен XHTTP по умолчанию: $XHTTP_SUB"
+  fi
+  if [[ -n $CF_TOKEN && ! $CF_TOKEN =~ ^[A-Za-z0-9_-]{20,200}$ ]]; then
+    die "--cf-token: недопустимые символы в токене Cloudflare"
+  fi
+  [[ $CLIENT_NAME =~ ^[A-Za-z0-9._-]{1,64}$ ]] || die "Имя клиента: только буквы, цифры, точка, дефис, подчёркивание (до 64)"
+}
+
 wizard() {
   printf '\n%s\n' "${C_B}${C_C}╔══════════════════════════════════════════╗${C_N}"
   printf '%s\n'   "${C_B}${C_C}║   xui-deployer · мастер установки 3X-UI  ║${C_N}"
@@ -148,7 +177,7 @@ wizard() {
     DOMAIN="$dm"
   fi
   if [[ -n $DOMAIN ]]; then
-    [[ $DOMAIN =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]] || die "Некорректный домен: $DOMAIN"
+    valid_domain "$DOMAIN" || die "Некорректный домен: $DOMAIN"
     info "  Домен: $DOMAIN (REALITY self-steal, ссылки REALITY идут на домен)."
     if [[ -z $CF_TOKEN ]]; then
       local cf
@@ -184,8 +213,8 @@ wizard() {
       [[ $XHTTP_SUB == *".$DOMAIN" || $XHTTP_SUB == "$DOMAIN" ]] || warn "Поддомен $XHTTP_SUB не входит в $DOMAIN – нужен отдельный сертификат и A-запись."
       info "  XHTTP: https://$XHTTP_SUB (отдельный сертификат, маскировка под обычный сайт)."
     else
+      [[ -z $XHTTP_SUB ]] || die "--xhttp-sub требует --domain: поддомену нужен сертификат и A-запись"
       warn "Без домена XHTTP будет работать через IP:443 (менее заметно для DPI, чем поддомен)."
-      XHTTP_SUB=""
     fi
   fi
 
@@ -235,13 +264,13 @@ main() {
       [[ ",$PROTOCOLS_SELECTED," == *,xhttp,* && -z $XHTTP_SUB ]] && XHTTP_SUB="xhttp.$DOMAIN"
     else
       [[ -n $SNI ]] || SNI="$(pick_sni)"
-      XHTTP_SUB=""
     fi
     gen_panel_creds
   else
     wizard
   fi
 
+  validate_config
   HOST="$HOST_IP"
 
   preflight_packages

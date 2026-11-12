@@ -3,6 +3,7 @@
 *.bak
 .env
 state.env
+state.json
 install-result.env
 .idea/
 .vscode/

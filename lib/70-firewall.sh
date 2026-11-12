@@ -10,7 +10,14 @@ setup_firewall() {
   command -v ufw >/dev/null 2>&1 || { warn "ufw не найден – пропущен."; return 0; }
 
   ufw allow "$ssh/tcp" >/dev/null
-  [[ $ssh != 22 ]] && ufw allow 22/tcp >/dev/null 2>&1 || true
+  if [[ $ssh != 22 ]]; then
+    if ss -Htln 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$ssh\$"; then
+      ufw delete allow 22/tcp >/dev/null 2>&1 || true
+    else
+      ufw allow 22/tcp >/dev/null 2>&1 || true
+      warn "SSH не слушает порт $ssh – 22/tcp оставлен открытым, чтобы не потерять доступ."
+    fi
+  fi
   ufw allow 80/tcp >/dev/null
   ufw allow 443/tcp >/dev/null
 

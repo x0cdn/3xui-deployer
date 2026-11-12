@@ -25,6 +25,32 @@ rand_str() { openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c "${1:-16}"; 
 rand_hex() { openssl rand -hex "${1:-8}"; }
 uuid()     { cat /proc/sys/kernel/random/uuid; }
 
+valid_domain() {
+  local name="$1"
+  [[ ${#name} -ge 4 && ${#name} -le 253 ]] || return 1
+  [[ $name =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$ ]]
+}
+
+load_env_keys() {
+  local file="$1"; shift
+  [[ -f $file ]] || return 0
+  local -A allow=()
+  local key
+  for key in "$@"; do allow[$key]=1; done
+  local line k v
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ $line =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
+    k="${BASH_REMATCH[1]}"
+    v="${BASH_REMATCH[2]%$'\r'}"
+    [[ -n ${allow[$k]:-} ]] || continue
+    if [[ ${#v} -ge 2 && ( ${v:0:1} == '"' || ${v:0:1} == "'" ) && ${v: -1} == "${v:0:1}" ]]; then
+      v="${v:1:${#v}-2}"
+    fi
+    printf -v "$k" '%s' "$v"
+  done < "$file"
+  return 0
+}
+
 port_busy() {
   local n="${2:-tcp}" flag
   [[ $n == udp ]] && flag=u || flag=t

@@ -39,7 +39,10 @@
 - свободный порт 443;
 - для полноценной маскировки – свой домен с A-записью на сервер
   (и поддомен для XHTTP, например `xhttp.example.com`, туда же).
+  Поддомен XHTTP должен отличаться от основного домена, иначе nginx не различит их по SNI.
   Без домена скрипт работает: REALITY маскируется под чужой сайт, XHTTP идёт по IP.
+- nginx с модулем `stream` – пакет `libnginx-mod-stream` устанавливается автоматически
+  и проверяется перед генерацией конфигурации.
 
 ## Установка
 
@@ -218,7 +221,7 @@ acme.sh + Let's Encrypt, ключи ec-256, автопродление по cron
 ## Результат и управление
 
 - `/root/xui-deployer.txt` – панель, логин/пароль, подписка, ссылки по протоколам (chmod 600);
-- `/etc/xui-deployer/state.env` – машинное состояние установки;
+- `/etc/xui-deployer/state.json` – машинное состояние установки (JSON, не исполняется как shell);
 - команда `xui-deployer`:
 
 ```bash
@@ -227,7 +230,7 @@ xui-deployer status    # сервисы, порты, UFW, сертификаты
 xui-deployer links     # содержимое подписки (ссылки по протоколам)
 xui-deployer restart   # x-ui + nginx + client-sub
 xui-deployer routing   # применить /etc/client-sub/rules.yaml к Happ и JSON-подписке
-xui-deployer backup    # архив БД, конфигов и сертификатов в /root
+xui-deployer backup    # архив БД, конфигов, сертификатов и acme.sh в /root
 ```
 
 Конфиги nginx: `/etc/nginx/xui-stream.conf`, `/etc/nginx/conf.d/xui-front.conf`
@@ -262,7 +265,19 @@ lib/80-result.sh        реквизиты, ссылки, состояние
 client-sub/client_sub.py  посредник подписки (python3)
 templates/              лендинг, stream-конфиг, systemd-unit
 bin/xui-deployer        команда управления
+check.sh                локальные проверки (bash -n, shellcheck, py_compile, тесты)
+tests/                  smoke-тесты client-sub и конфига nginx stream
 ```
+
+## Проверки
+
+```bash
+bash check.sh
+```
+
+Проверяет `bash -n`, `shellcheck` (если установлен), `py_compile`, smoke-тест client-sub
+и синтаксис stream-конфига через `nginx -t` (нужен nginx с модулем stream).
+Те же проверки выполняются в GitHub Actions (`.github/workflows/ci.yml`).
 
 ## Лицензии
 

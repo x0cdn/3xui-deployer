@@ -39,7 +39,7 @@ panel_install() {
 panel_connect() {
   [[ $DRY_RUN == yes ]] && { info "  ${C_D}[dry-run] подключение к API панели${C_N}"; return 0; }
   [[ -f $XUI_ENV ]] || die "Нет $XUI_ENV – панель не установлена корректно."
-  source "$XUI_ENV"
+  load_env_keys "$XUI_ENV" XUI_API_TOKEN XUI_PANEL_PORT XUI_WEB_BASE_PATH XUI_USERNAME XUI_PASSWORD
   TOKEN="${XUI_API_TOKEN:-}"
   [[ -n $TOKEN ]] || die "В $XUI_ENV нет XUI_API_TOKEN."
   local i scheme

@@ -19,9 +19,10 @@ ensure_acme() {
 
 _acme_open_80() {
   command -v ufw >/dev/null 2>&1 || return 0
-  ufw status 2>/dev/null | grep -q '^Status: active' || return 0
-  ufw status 2>/dev/null | grep -qE '^80(/tcp)? +ALLOW' && return 0
-  ufw allow 80/tcp >/dev/null 2>&1 && ACME_OPENED_80=yes || true
+  if ! ufw status 2>/dev/null | grep -q '^Status: active'; then return 0; fi
+  if ufw status 2>/dev/null | grep -qE '^80(/tcp)? +ALLOW'; then return 0; fi
+  if ufw allow 80/tcp >/dev/null 2>&1; then ACME_OPENED_80=yes; fi
+  return 0
 }
 _acme_close_80() {
   [[ ${ACME_OPENED_80:-no} == yes ]] || return 0

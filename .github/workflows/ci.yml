@@ -1,0 +1,17 @@
+name: check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Установка проверок
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck nginx libnginx-mod-stream python3-yaml jq
+      - name: Проверки
+        run: bash check.sh

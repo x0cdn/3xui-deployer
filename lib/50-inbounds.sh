@@ -35,7 +35,7 @@ add_inbound() {
   local remark="$1" port="$2" listen="$3" protocol="$4" settings="$5" stream="$6" sniff="$7"
   local body
   body=$(jq -nc --arg rm "$remark" --argjson port "$port" --arg p "$protocol" \
-    --arg s "$settings" --arg st "$stream" --arg sn "$sniff" --arg l "$listen" '{
+    --argjson s "$settings" --argjson st "$stream" --argjson sn "$sniff" --arg l "$listen" '{
       remark:$rm, enable:true, listen:$l, port:$port, protocol:$p, settings:$s, streamSettings:$st,
       sniffing:$sn, expiryTime:0, total:0}')
   if [[ $DRY_RUN == yes ]]; then
