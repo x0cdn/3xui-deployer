@@ -76,7 +76,8 @@ sudo bash install.sh -y --domain vpn.example.com --cf-token <токен> --ssh-p
 | `--protocols СПИСОК` | `reality,ws,xhttp`, `all` или `minimal` |
 | `--user ИМЯ` | имя первого клиента (по умолчанию `admin`) |
 | `--ssh-port ПОРТ` | сменить порт SSH до включения UFW |
-| `--cf-token ТОКЕН` | Cloudflare API token: DNS-01, сертификаты без порта 80 |
+| `--cf-token ТОКЕН` | Cloudflare API token: DNS-01, сертификаты без порта 80 (остаётся в истории команд) |
+| `--cf-token-file ФАЙЛ` | прочитать Cloudflare API token из файла (безопаснее аргумента) |
 | `--email EMAIL` | email для acme.sh |
 | `--no-ufw` | не трогать файрвол |
 | `--no-client-sub` | подписка отдаётся панелью напрямую, без посредника |
@@ -87,7 +88,8 @@ sudo bash install.sh -y --domain vpn.example.com --cf-token <токен> --ssh-p
 
 1. **Свой домен для маскировки** (A-запись на сервер). Enter – без домена.
 2. **Cloudflare API token** (если домен задан): DNS-01 позволяет выпустить сертификат,
-   не открывая порт 80. Enter – выпуск через порт 80 (HTTP-01).
+   не открывая порт 80. Ввод скрытый. Enter – выпуск через порт 80 (HTTP-01).
+   Токен также можно передать через `--cf-token-file` или переменную окружения `XUI_CF_TOKEN`.
 3. **Протоколы подключений** – мультивыбор, по умолчанию отмечены все три:
    REALITY, VLESS-WS, XHTTP.
 4. **Поддомен для XHTTP** (если выбран XHTTP и есть домен), по умолчанию `xhttp.<домен>`.
@@ -231,6 +233,7 @@ xui-deployer links     # содержимое подписки (ссылки п�
 xui-deployer restart   # x-ui + nginx + client-sub
 xui-deployer routing   # применить /etc/client-sub/rules.yaml к Happ и JSON-подписке
 xui-deployer backup    # архив БД, конфигов, сертификатов и acme.sh в /root
+xui-deployer backup --full  # disaster recovery: файлы сервисов, список пакетов и restore.sh
 ```
 
 Конфиги nginx: `/etc/nginx/xui-stream.conf`, `/etc/nginx/conf.d/xui-front.conf`
@@ -243,6 +246,10 @@ xui-deployer backup    # архив БД, конфигов, сертификат
 - Установщик 3X-UI (`v3.11.0`) скачивается с GitHub и проверяется по закреплённому SHA256 –
   подменённый файл не выполнится.
 - Порт SSH меняется **до** включения UFW; текущий порт всегда разрешается до `enable`.
+- Панель и подписка слушают только `127.0.0.1`; после настройки проверяется, что сертификат
+  панели соответствует ключу, а порт панели не открыт наружу.
+- Cloudflare-токен в мастере вводится скрыто; флаг `--cf-token` оставляет его в истории команд,
+  поэтому предпочтительны `--cf-token-file` или `XUI_CF_TOKEN`.
 - Файлы с реквизитами доступны только root.
 - Скрипт не трогает существующие сайты nginx (кроме дефолтного `sites-enabled/default`,
   который мешает acme.sh занимать порт 80).

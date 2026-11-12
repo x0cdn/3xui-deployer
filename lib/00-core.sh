@@ -144,3 +144,18 @@ ask_multiselect() {
 confirm() {
   ask_yesno "$1" "yes"
 }
+
+ask_secret() {
+  local __var="$1" __prompt="$2" __val="" __stty=""
+  printf '%s: ' "$__prompt" >&2
+  if [[ -t 0 ]] && command -v stty >/dev/null 2>&1; then
+    __stty="$(stty -g 2>/dev/null || true)"
+    stty -echo 2>/dev/null || true
+    IFS= read -r __val || true
+    if [[ -n $__stty ]]; then stty "$__stty" 2>/dev/null || true; fi
+    printf '\n' >&2
+  else
+    IFS= read -r __val || true
+  fi
+  printf -v "$__var" '%s' "$__val"
+}

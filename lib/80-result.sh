@@ -41,12 +41,15 @@ write_result() {
     --arg panel_url "$panel_url" \
     --arg reality_sni "$REALITY_SNI" \
     --arg client_sub_active "$CLIENT_SUB_ACTIVE" \
+    --arg xui_version "$XUI_VERSION" \
+    --arg xui_install_sha "$XUI_INSTALL_SHA256" \
     --arg deployed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     '{host:$host, domain:$domain, xhttp_sub:$xhttp_sub, protocols:$protocols,
       ssh_port:$ssh_port, panel_port:$panel_port, panel_path:$panel_path,
       panel_user:$panel_user, subid:$subid, sub_url:$sub_url, sub_link:$sub_link,
       panel_url:$panel_url, reality_sni:$reality_sni,
-      client_sub_active:$client_sub_active, deployed_at:$deployed_at}' \
+      client_sub_active:$client_sub_active, xui_version:$xui_version,
+      xui_install_sha:$xui_install_sha, deployed_at:$deployed_at}' \
     > "$STATE_DIR/state.json"
   chmod 600 "$STATE_DIR/state.json"
   rm -f "$STATE_DIR/state.env"

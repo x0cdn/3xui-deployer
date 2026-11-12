@@ -7,6 +7,25 @@ SUB_URL=""
 PANEL_URL=""
 SUB_TITLE="xui-deployer"
 
+verify_panel() {
+  local cert="$1" key="$2" port="${XUI_PANEL_PORT:-$PANEL_PORT_CHOICE}"
+  [[ -s $cert ]] || die "Сертификат панели не найден: $cert"
+  [[ -s $key ]] || die "Ключ панели не найден: $key"
+  local pub_cert pub_key
+  pub_cert="$(openssl x509 -in "$cert" -noout -pubkey 2>/dev/null | openssl pkey -pubin -outform der 2>/dev/null | sha256sum | awk '{print $1}')"
+  pub_key="$(openssl pkey -in "$key" -pubout -outform der 2>/dev/null | sha256sum | awk '{print $1}')"
+  [[ -n $pub_cert && -n $pub_key ]] || die "Не удалось прочитать сертификат или ключ панели"
+  [[ $pub_cert == "$pub_key" ]] || die "Сертификат и ключ панели не совпадают: $cert / $key"
+
+  local listen
+  listen="$(ss -Htln "sport = :$port" 2>/dev/null | awk '{print $4}')"
+  [[ -n $listen ]] || die "Панель не слушает порт $port (ожидался 127.0.0.1)."
+  if grep -qvE '^(127\.0\.0\.1|\[::1\]|::1):' <<<"$listen"; then
+    die "Панель слушает не только localhost: $(tr '\n' ' ' <<<"$listen")"
+  fi
+  ok "Сертификат панели соответствует ключу, панель слушает только localhost"
+}
+
 configure_settings() {
   local host="$1" cert="$2" key="$3"
   step "Настройка панели и подписки"
@@ -43,6 +62,7 @@ configure_settings() {
 
   api POST setting/update "$upd" >/dev/null
   panel_restart
+  verify_panel "$cert" "$key"
   PANEL_URL="https://$host/${XUI_WEB_BASE_PATH}/"
   ok "Панель и подписка настроены (слушают localhost, наружу – nginx)"
 }

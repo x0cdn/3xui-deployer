@@ -9,6 +9,8 @@ RESULT="/root/xui-deployer.txt"
 HOST=""; DOMAIN=""; XHTTP_SUB=""; PROTOCOLS=""; SSH_PORT=""
 PANEL_PORT=""; PANEL_PATH=""; PANEL_USER=""; SUBID=""; SUB_URL=""
 SUB_LINK=""; PANEL_URL=""; REALITY_SNI=""; CLIENT_SUB_ACTIVE="no"; DEPLOYED_AT=""
+XUI_VERSION="v3.11.0"
+XUI_INSTALL_SHA256="9684bae4f769b2127fcceceb4f200045657381311867529e6ba76c6b58e2825d"
 
 [[ $EUID -eq 0 ]] || { echo "Нужен root: sudo xui-deployer $*" >&2; exit 1; }
 
@@ -51,13 +53,15 @@ load_state() {
         panel_url) PANEL_URL="$val" ;;
         reality_sni) REALITY_SNI="$val" ;;
         client_sub_active) CLIENT_SUB_ACTIVE="$val" ;;
+        xui_version) XUI_VERSION="$val" ;;
+        xui_install_sha) XUI_INSTALL_SHA256="$val" ;;
         deployed_at) DEPLOYED_AT="$val" ;;
       esac
     done < <(jq -r 'to_entries[] | [(.key | tostring), ((.value // "") | tostring)] | @tsv' "$STATE_JSON" 2>/dev/null || true)
   elif [[ -f $STATE_ENV ]]; then
     load_env_keys "$STATE_ENV" HOST DOMAIN XHTTP_SUB PROTOCOLS SSH_PORT PANEL_PORT \
       PANEL_PATH PANEL_USER SUBID SUB_URL SUB_LINK PANEL_URL REALITY_SNI \
-      CLIENT_SUB_ACTIVE DEPLOYED_AT
+      CLIENT_SUB_ACTIVE DEPLOYED_AT XUI_VERSION XUI_INSTALL_SHA256
   fi
   load_env_keys "$XUI_ENV" XUI_USERNAME XUI_PASSWORD XUI_PANEL_PORT XUI_WEB_BASE_PATH XUI_API_TOKEN
   return 0
@@ -188,35 +192,132 @@ PY
   cp -a "$src-shm" "$dst-shm" 2>/dev/null || true
 }
 
-cmd_backup() {
-  local ts out tmp
-  ts=$(date -u +%Y%m%d-%H%M%S)
-  out="/root/xui-deployer-backup-$ts.tar.gz"
-  tmp=$(mktemp -d)
-  mkdir -p "$tmp/etc/x-ui" "$tmp/etc/xui-deployer" "$tmp/etc/client-sub" \
-    "$tmp/etc/nginx/conf.d" "$tmp/root/cert" "$tmp/root/.acme.sh"
+BACKUP_PACKAGES=(curl jq openssl qrencode ca-certificates iproute2 ufw socat cron unzip python3 python3-yaml nginx libnginx-mod-stream)
 
-  backup_sqlite /etc/x-ui/x-ui.db "$tmp/etc/x-ui/x-ui.db"
-  cp -a /etc/x-ui/install-result.env "$tmp/etc/x-ui/" 2>/dev/null || true
-  cp -a "$STATE_JSON" "$tmp/etc/xui-deployer/" 2>/dev/null || true
-  cp -a "$STATE_ENV" "$tmp/etc/xui-deployer/" 2>/dev/null || true
-  cp -a /etc/client-sub/config.json "$tmp/etc/client-sub/" 2>/dev/null || true
-  cp -a /etc/client-sub/rules.yaml "$tmp/etc/client-sub/" 2>/dev/null || true
-  cp -a /etc/client-sub/sni-grace.json "$tmp/etc/client-sub/" 2>/dev/null || true
-  cp -a /etc/nginx/nginx.conf "$tmp/etc/nginx/" 2>/dev/null || true
-  cp -a /etc/nginx/xui-stream.conf "$tmp/etc/nginx/" 2>/dev/null || true
-  cp -a /etc/nginx/conf.d/xui-front.conf "$tmp/etc/nginx/conf.d/" 2>/dev/null || true
-  cp -a "$RESULT" "$tmp/root/" 2>/dev/null || true
-  cp -a /root/cert/. "$tmp/root/cert/" 2>/dev/null || true
-  cp -a /root/.acme.sh/. "$tmp/root/.acme.sh/" 2>/dev/null || true
+write_restore_script() {
+  local out="$1"
+  {
+    printf '#!/usr/bin/env bash\nset -euo pipefail\n\n'
+    printf 'XUI_VERSION=%q\n' "${XUI_VERSION:-v3.11.0}"
+    printf 'XUI_INSTALL_SHA256=%q\n' "$XUI_INSTALL_SHA256"
+    printf 'ARCHIVE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"\n'
+    cat <<'RESTORE'
+
+[[ $EUID -eq 0 ]] || { echo "Запустите от root: sudo bash restore.sh" >&2; exit 1; }
+command -v apt-get >/dev/null 2>&1 || { echo "Нужен Debian/Ubuntu (apt-get)" >&2; exit 1; }
+
+echo "==> Пакеты"
+mapfile -t PACKAGES < <(awk -F'\t' 'NF >= 1 {print $1}' "$ARCHIVE_DIR/packages.txt")
+if [[ ${#PACKAGES[@]} -gt 0 ]]; then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq || true
+  apt-get install -y -qq "${PACKAGES[@]}"
+fi
+
+echo "==> 3X-UI $XUI_VERSION"
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+curl -fsSL --retry 3 -o "$tmp" "https://raw.githubusercontent.com/MHSanaei/3x-ui/${XUI_VERSION}/install.sh"
+got=$(sha256sum "$tmp" | awk '{print $1}')
+[[ $got == "$XUI_INSTALL_SHA256" ]] || { echo "SHA256 установщика не совпал" >&2; exit 1; }
+XUI_NONINTERACTIVE=1 XUI_SSL_MODE=none XUI_SERVER_IP=127.0.0.1 bash "$tmp" "$XUI_VERSION" </dev/null || true
+rm -f "$tmp"
+
+echo "==> Файлы"
+cp -a "$ARCHIVE_DIR/payload/." /
+systemctl daemon-reload
+systemctl enable x-ui nginx >/dev/null 2>&1 || true
+if [[ -f /etc/systemd/system/client-sub.service ]]; then
+  systemctl enable client-sub >/dev/null 2>&1 || true
+fi
+systemctl restart x-ui || true
+systemctl restart nginx || true
+if [[ -f /etc/systemd/system/client-sub.service ]]; then
+  systemctl restart client-sub || true
+fi
+if [[ -x /root/.acme.sh/acme.sh ]]; then
+  /root/.acme.sh/acme.sh --install-cronjob >/dev/null 2>&1 || true
+fi
+
+echo "==> Готово: проверьте xui-deployer status, DNS A-записи и выпуск сертификатов"
+RESTORE
+  } > "$out"
+  chmod 700 "$out"
+}
+
+cmd_backup() {
+  local mode="${1:-config}" full=no
+  case "$mode" in
+    ""|config|--config) full=no ;;
+    --full|full) full=yes ;;
+    *) echo "Неизвестный режим backup: $mode (используйте --full)" >&2; exit 1 ;;
+  esac
+
+  local ts out tmp payload
+  ts=$(date -u +%Y%m%d-%H%M%S)
+  if [[ $full == yes ]]; then
+    out="/root/xui-deployer-full-$ts.tar.gz"
+  else
+    out="/root/xui-deployer-backup-$ts.tar.gz"
+  fi
+  tmp=$(mktemp -d)
+  payload="$tmp/payload"
+  mkdir -p "$payload/etc/x-ui" "$payload/etc/xui-deployer" "$payload/etc/client-sub" \
+    "$payload/etc/nginx/conf.d" "$payload/etc/nginx/modules-enabled" \
+    "$payload/etc/systemd/system/ssh.socket.d" "$payload/root/cert" "$payload/root/.acme.sh"
+
+  backup_sqlite /etc/x-ui/x-ui.db "$payload/etc/x-ui/x-ui.db"
+  cp -a /etc/x-ui/install-result.env "$payload/etc/x-ui/" 2>/dev/null || true
+  cp -a "$STATE_JSON" "$payload/etc/xui-deployer/" 2>/dev/null || true
+  cp -a "$STATE_ENV" "$payload/etc/xui-deployer/" 2>/dev/null || true
+  cp -a /etc/client-sub/config.json "$payload/etc/client-sub/" 2>/dev/null || true
+  cp -a /etc/client-sub/rules.yaml "$payload/etc/client-sub/" 2>/dev/null || true
+  cp -a /etc/client-sub/sni-grace.json "$payload/etc/client-sub/" 2>/dev/null || true
+  cp -a /etc/nginx/nginx.conf "$payload/etc/nginx/" 2>/dev/null || true
+  cp -a /etc/nginx/xui-stream.conf "$payload/etc/nginx/" 2>/dev/null || true
+  cp -a /etc/nginx/conf.d/xui-front.conf "$payload/etc/nginx/conf.d/" 2>/dev/null || true
+  cp -a /etc/nginx/modules-enabled/. "$payload/etc/nginx/modules-enabled/" 2>/dev/null || true
+  cp -a /etc/systemd/system/client-sub.service "$payload/etc/systemd/system/" 2>/dev/null || true
+  cp -a /etc/systemd/system/ssh.socket.d/override.conf "$payload/etc/systemd/system/ssh.socket.d/" 2>/dev/null || true
+  cp -a "$RESULT" "$payload/root/" 2>/dev/null || true
+  cp -a /root/cert/. "$payload/root/cert/" 2>/dev/null || true
+  cp -a /root/.acme.sh/. "$payload/root/.acme.sh/" 2>/dev/null || true
+
+  if [[ $full == yes ]]; then
+    mkdir -p "$payload/usr/local/lib/client-sub" "$payload/usr/local/bin"
+    cp -a /usr/local/lib/client-sub/client_sub.py "$payload/usr/local/lib/client-sub/" 2>/dev/null || true
+    cp -a /usr/local/bin/xui-deployer "$payload/usr/local/bin/" 2>/dev/null || true
+    dpkg-query -W -f='${Package}\t${Version}\n' "${BACKUP_PACKAGES[@]}" > "$tmp/packages.txt" 2>/dev/null || true
+    {
+      printf 'Создано: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      printf 'Хост: %s\n' "$HOST"
+      printf '3X-UI: %s (sha256 установщика %s)\n' "$XUI_VERSION" "$XUI_INSTALL_SHA256"
+      uname -a
+      grep -E '^(PRETTY_NAME|VERSION_ID)=' /etc/os-release 2>/dev/null || true
+      if command -v nginx >/dev/null 2>&1; then nginx -V 2>&1; fi
+      openssl version 2>/dev/null || true
+      python3 -V 2>&1 || true
+    } > "$tmp/manifest.txt"
+    write_restore_script "$tmp/restore.sh"
+  fi
 
   tar -czf "$out" -C "$tmp" .
   rm -rf "$tmp"
   chmod 600 "$out"
-  echo "Резервная копия: $out"
-  echo "Внутри: БД (согласованная копия), /etc/x-ui, /etc/xui-deployer, /etc/client-sub,"
-  echo "        /etc/nginx (nginx.conf, stream, фронт), /root/cert и /root/.acme.sh."
-  echo "Восстановление: распакуйте архив в / на чистом VPS, затем systemctl restart x-ui nginx client-sub."
+  if [[ $full == yes ]]; then
+    echo "Полная резервная копия: $out"
+    echo "Внутри: БД, конфиги, сертификаты и acme.sh, client_sub.py, unit-файлы, /usr/local/bin/xui-deployer,"
+    echo "        modules-enabled, список пакетов, manifest.txt и restore.sh."
+    echo "Восстановление: mkdir -p /tmp/restore && tar -xzf $out -C /tmp/restore && sudo bash /tmp/restore/restore.sh"
+  else
+    echo "Резервная копия конфигурации: $out"
+    echo "Внутри: БД (согласованная копия), /etc/x-ui, /etc/xui-deployer, /etc/client-sub,"
+    echo "        /etc/nginx (nginx.conf, stream, фронт, modules-enabled), unit client-sub,"
+    echo "        SSH override, /root/cert и /root/.acme.sh."
+    echo "Восстановление: на чистом VPS поставьте ту же версию (get.sh), затем"
+    echo "  mkdir -p /tmp/restore && tar -xzf $out -C /tmp/restore && cp -a /tmp/restore/payload/. /"
+    echo "  и перезапустите x-ui, nginx, client-sub. Полный вариант: xui-deployer backup --full."
+  fi
 }
 
 case "${1:-help}" in
@@ -225,7 +326,7 @@ case "${1:-help}" in
   restart) cmd_restart ;;
   routing|rules) cmd_routing ;;
   links)   cmd_links ;;
-  backup)  cmd_backup ;;
+  backup)  cmd_backup "${2:-}" ;;
   help|-h|--help)
     cat <<EOF
 xui-deployer – управление панелью
@@ -234,7 +335,8 @@ xui-deployer – управление панелью
   links     ссылка подписки и её содержимое (ссылки по протоколам)
   restart   перезапустить x-ui, nginx и client-sub
   routing   применить /etc/client-sub/rules.yaml к Happ и JSON-подписке
-  backup    резервная копия (БД, сертификаты, конфиги) в /root
+  backup           резервная копия конфигурации (БД, сертификаты, конфиги) в /root
+  backup --full    полный disaster recovery: файлы сервисов, список пакетов, restore.sh
 EOF
     ;;
   *) echo "Неизвестная команда: $1 (см. xui-deployer help)" >&2; exit 1 ;;

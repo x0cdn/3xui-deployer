@@ -18,6 +18,8 @@ INSTALL_CLIENT_SUB="yes"
 SSH_PORT_NEW=""
 SSH_PORT_FINAL=""
 CF_TOKEN=""
+CF_TOKEN_FILE=""
+CF_TOKEN_FROM_ARG="no"
 ACME_EMAIL=""
 HOST=""
 CERT=""; KEY=""
@@ -46,7 +48,9 @@ xui-deployer – установка 3X-UI (архитектура «всё TCP �
                         или all / minimal (по умолчанию: все три).
   --user ИМЯ            имя первого клиента (по умолчанию admin).
   --ssh-port ПОРТ       сменить порт SSH до включения UFW.
-  --cf-token ТОКЕН      Cloudflare API token для DNS-01 (сертификаты без порта 80).
+  --cf-token ТОКЕН      Cloudflare API token для DNS-01 (остаётся в истории команд,
+                        лучше --cf-token-file или XUI_CF_TOKEN).
+  --cf-token-file ФАЙЛ  прочитать Cloudflare API token из файла (например /root/cf.token).
   --email EMAIL         email для acme.sh (Let's Encrypt).
   --no-ufw              не трогать файрвол.
   --no-client-sub       не ставить client-sub (подписка будет отдаваться панелью напрямую).
@@ -64,7 +68,8 @@ while [[ $# -gt 0 ]]; do
     --protocols)  PROTOCOLS_SELECTED="${2:-}"; shift 2 ;;
     --user)       CLIENT_NAME="${2:-}"; shift 2 ;;
     --ssh-port)   SSH_PORT_NEW="${2:-}"; shift 2 ;;
-    --cf-token)   CF_TOKEN="${2:-}"; shift 2 ;;
+    --cf-token)   CF_TOKEN="${2:-}"; CF_TOKEN_FROM_ARG="yes"; shift 2 ;;
+    --cf-token-file) CF_TOKEN_FILE="${2:-}"; shift 2 ;;
     --email)      ACME_EMAIL="${2:-}"; shift 2 ;;
     --no-ufw)     CONFIGURE_UFW="no"; shift ;;
     --no-client-sub) INSTALL_CLIENT_SUB="no"; shift ;;
@@ -75,6 +80,21 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 export DRY_RUN
+
+if [[ -n $CF_TOKEN_FILE ]]; then
+  [[ -r $CF_TOKEN_FILE ]] || die "--cf-token-file: файл не читается: $CF_TOKEN_FILE"
+  IFS= read -r CF_TOKEN < "$CF_TOKEN_FILE" || true
+  CF_TOKEN="${CF_TOKEN%$'\r'}"
+  CF_TOKEN="${CF_TOKEN#"${CF_TOKEN%%[![:space:]]*}"}"
+  CF_TOKEN="${CF_TOKEN%"${CF_TOKEN##*[![:space:]]}"}"
+  [[ -n $CF_TOKEN ]] || die "--cf-token-file: файл пуст: $CF_TOKEN_FILE"
+fi
+if [[ -z $CF_TOKEN && -n ${XUI_CF_TOKEN:-} ]]; then
+  CF_TOKEN="$XUI_CF_TOKEN"
+fi
+if [[ $CF_TOKEN_FROM_ARG == yes ]]; then
+  warn "Токен Cloudflare передан аргументом: он остаётся в истории команд. Используйте --cf-token-file или XUI_CF_TOKEN."
+fi
 
 pick_sni() {
   local c
@@ -161,7 +181,7 @@ validate_config() {
     valid_domain "$XHTTP_SUB" || die "Некорректный поддомен XHTTP по умолчанию: $XHTTP_SUB"
   fi
   if [[ -n $CF_TOKEN && ! $CF_TOKEN =~ ^[A-Za-z0-9_-]{20,200}$ ]]; then
-    die "--cf-token: недопустимые символы в токене Cloudflare"
+    die "Токен Cloudflare: недопустимые символы (ожидается токен вида AbCdEf...)"
   fi
   [[ $CLIENT_NAME =~ ^[A-Za-z0-9._-]{1,64}$ ]] || die "Имя клиента: только буквы, цифры, точка, дефис, подчёркивание (до 64)"
 }
@@ -181,7 +201,7 @@ wizard() {
     info "  Домен: $DOMAIN (REALITY self-steal, ссылки REALITY идут на домен)."
     if [[ -z $CF_TOKEN ]]; then
       local cf
-      ask cf "Cloudflare API token для DNS-01 (Enter – выпуск через порт 80)" ""
+      ask_secret cf "Cloudflare API token для DNS-01 (Enter – выпуск через порт 80)"
       CF_TOKEN="$cf"
     fi
   else

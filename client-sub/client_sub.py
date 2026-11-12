@@ -622,6 +622,8 @@ class SubscriptionHandler(http.server.BaseHTTPRequestHandler):
                                        prefix, wants_clash, mihomo_core)
             except (yaml.YAMLError, UnicodeError) as exc:
                 log(f"подписку обработать не удалось: {exc}")
+            except Exception as exc:
+                log(f"подписку обработать не удалось ({type(exc).__name__}): {exc}")
 
         self.send_response(code)
         for name in FORWARDED_HEADERS:

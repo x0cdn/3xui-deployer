@@ -32,6 +32,8 @@ expect_fail bad-domain --domain 'vpn.example.com;id' --protocols all
 expect_fail sub-without-domain --xhttp-sub x.example.com --sni example.com --protocols ws,xhttp
 expect_fail bad-sni --sni 'bad host' --protocols ws
 expect_fail bad-client --sni example.com --protocols ws --user 'bad name'
+expect_fail bad-cf-token --domain vpn.example.com --protocols ws --cf-token 'bad token!'
+expect_fail bad-cf-file --domain vpn.example.com --protocols ws --cf-token-file /nonexistent/cf.token
 expect_ok all-no-domain --sni example.com --protocols reality,ws,xhttp
 expect_ok ws-no-domain --sni example.com --protocols ws
 expect_ok all-with-domain --domain vpn.example.com --protocols reality,ws,xhttp
